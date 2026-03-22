@@ -3,3 +3,5 @@ bun.lockb
 *.log
 .env
 .DS_Store
+test/
+nul

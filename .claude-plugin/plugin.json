@@ -1,0 +1,13 @@
+{
+  "name": "telegram",
+  "description": "Extended Telegram channel for Claude Code — 14 tools, built-in scheduler, inline keyboards, document/voice handling. Drop-in replacement for the official plugin with full access control.",
+  "version": "0.1.0",
+  "keywords": [
+    "telegram",
+    "messaging",
+    "channel",
+    "mcp",
+    "scheduler",
+    "keyboards"
+  ]
+}

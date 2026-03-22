@@ -146,8 +146,11 @@ Inherits the official plugin's full access control:
 
 ## Credits
 
-Forked from [Anthropic's official Telegram plugin](https://claude.ai/claude-code) (Apache 2.0).
+Forked from Anthropic's official Claude Code Telegram plugin.
+Copyright 2024-2026 Anthropic, PBC. Original licensed under Apache License 2.0.
+
+See [NOTICE](NOTICE) for full attribution.
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE)

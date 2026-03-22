@@ -8,7 +8,7 @@
   },
   "keywords": ["claude-code", "telegram", "mcp", "chatbot", "scheduler"],
   "author": "gitintel-ai",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": "./server.ts",
   "scripts": {

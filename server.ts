@@ -102,9 +102,9 @@ function readSchedule(): Schedule {
 }
 
 function saveSchedule(s: Schedule): void {
-  mkdirSync(STATE_DIR, { recursive: true })
+  mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
   const tmp = SCHEDULE_FILE + '.tmp'
-  writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n')
+  writeFileSync(tmp, JSON.stringify(s, null, 2) + '\n', { mode: 0o600 })
   renameSync(tmp, SCHEDULE_FILE)
 }
 
@@ -165,6 +165,16 @@ function dateInTimezone(date: Date, tz: string): Date {
 }
 
 let mcpReady = false
+
+// Track received callback query IDs — only allow answering queries we received.
+// Entries expire after 120 seconds to prevent memory growth.
+const receivedCallbacks = new Map<string, number>()
+setInterval(() => {
+  const cutoff = Date.now() - 120_000
+  for (const [id, ts] of receivedCallbacks) {
+    if (ts < cutoff) receivedCallbacks.delete(id)
+  }
+}, 30_000)
 
 function checkSchedule(): void {
   if (!mcpReady) return
@@ -503,6 +513,8 @@ function checkApprovals(): void {
   if (files.length === 0) return
 
   for (const senderId of files) {
+    // Validate senderId is a numeric Telegram user ID — reject crafted filenames
+    if (!/^\d+$/.test(senderId)) { rmSync(join(APPROVED_DIR, senderId), { force: true }); continue }
     const file = join(APPROVED_DIR, senderId)
     void bot.api.sendMessage(senderId, "Paired! Say hi to Claude.").then(
       () => rmSync(file, { force: true }),
@@ -926,8 +938,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: `sent with keyboard (id: ${sent.message_id})` }] }
       }
       case 'answer_callback': {
-        await bot.api.answerCallbackQuery(args.callback_query_id as string, {
-          text: (args.text as string | undefined) ?? undefined,
+        const cbId = args.callback_query_id as string
+        if (!receivedCallbacks.has(cbId)) {
+          throw new Error('callback_query_id not recognized — only queries received via this session can be answered')
+        }
+        receivedCallbacks.delete(cbId)
+        await bot.api.answerCallbackQuery(cbId, {
+          text: (args.text as string | undefined)?.slice(0, 200) ?? undefined,
           show_alert: (args.show_alert as boolean | undefined) ?? false,
         })
         return { content: [{ type: 'text', text: 'callback answered' }] }
@@ -967,6 +984,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: `forwarded (new id: ${fwd.message_id})` }] }
       }
       case 'schedule_task': {
+        assertAllowedChat(args.chat_id as string)
         const schedule = readSchedule()
         const id = args.id as string
 
@@ -1029,6 +1047,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: `${tasks.length} tasks (tz: ${schedule.timezone}):${quietInfo}\n\n${lines.join('\n\n')}` }] }
       }
       case 'schedule_delay': {
+        assertAllowedChat(args.chat_id as string)
         // Parse delay string: "30m", "2h", "1d", "90s"
         const delayStr = args.delay as string
         const match = delayStr.match(/^(\d+)\s*(s|m|h|d)$/i)
@@ -1129,7 +1148,7 @@ bot.on('message:photo', async ctx => {
       const buf = Buffer.from(await res.arrayBuffer())
       const ext = file.file_path.split('.').pop() ?? 'jpg'
       const path = join(INBOX_DIR, `${Date.now()}-${best.file_unique_id}.${ext}`)
-      mkdirSync(INBOX_DIR, { recursive: true })
+      mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
       writeFileSync(path, buf)
       return path
     } catch (err) {
@@ -1150,9 +1169,11 @@ bot.on('message:document', async ctx => {
       const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
       const res = await fetch(url)
       const buf = Buffer.from(await res.arrayBuffer())
-      const name = doc.file_name ?? `${Date.now()}-doc`
-      const path = join(INBOX_DIR, `${Date.now()}-${name}`)
-      mkdirSync(INBOX_DIR, { recursive: true })
+      const rawName = doc.file_name ?? `${Date.now()}-doc`
+      // Sanitize filename — strip path separators and traversal to prevent path injection
+      const safeName = rawName.replace(/[/\\]/g, '_').replace(/\.\./g, '_')
+      const path = join(INBOX_DIR, `${Date.now()}-${safeName}`)
+      mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
       writeFileSync(path, buf)
       return path
     } catch (err) {
@@ -1174,7 +1195,7 @@ bot.on('message:voice', async ctx => {
       const res = await fetch(url)
       const buf = Buffer.from(await res.arrayBuffer())
       const path = join(INBOX_DIR, `${Date.now()}-voice.ogg`)
-      mkdirSync(INBOX_DIR, { recursive: true })
+      mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
       writeFileSync(path, buf)
       return path
     } catch (err) {
@@ -1193,6 +1214,9 @@ bot.on('callback_query:data', async ctx => {
 
   const result = gate({ ...ctx, chat: query.message?.chat, from } as Context)
   if (result.action !== 'deliver') return
+
+  // Track this callback ID so answer_callback can validate it
+  receivedCallbacks.set(query.id, Date.now())
 
   void mcp.notification({
     method: 'notifications/claude/channel',

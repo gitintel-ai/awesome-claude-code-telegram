@@ -1,0 +1,14 @@
+{
+  "name": "awesome-claude-code-telegram",
+  "owner": {
+    "name": "gitintel-ai"
+  },
+  "plugins": [
+    {
+      "name": "telegram",
+      "source": "./",
+      "description": "Extended Telegram channel — 14 tools, built-in scheduler, inline keyboards, document/voice handling.",
+      "skills": ["./skills/access", "./skills/configure"]
+    }
+  ]
+}

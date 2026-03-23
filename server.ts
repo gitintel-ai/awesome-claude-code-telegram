@@ -24,7 +24,7 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, 
 import { homedir } from 'os'
 import { join, extname, sep } from 'path'
 
-const STATE_DIR = join(homedir(), '.claude', 'channels', 'telegram')
+const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
@@ -564,9 +564,9 @@ const mcp = new Server(
     instructions: [
       'The sender reads Telegram, not this session. Anything you want them to see must go through the reply tool — your transcript output never reaches their chat.',
       '',
-      'Messages from Telegram arrive as <channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">. If the tag has an image_path attribute, Read that file — it is a photo the sender attached. Reply with the reply tool — pass chat_id back. Use reply_to (set to a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply, omit reply_to for normal responses.',
+      'Messages from Telegram arrive as <channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">. If the tag has an image_path attribute, Read that file — it is a photo the sender attached. If the tag has attachment_file_id, call download_attachment with that file_id to fetch the file, then Read the returned path. Reply with the reply tool — pass chat_id back. Use reply_to (set to a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply, omit reply_to for normal responses.',
       '',
-      'reply accepts file paths (files: ["/abs/path.png"]) for attachments and an optional parse_mode ("MarkdownV2" or "HTML") for formatting. Use react to add emoji reactions, and edit_message to update a message you previously sent (e.g. progress → result).',
+      'reply accepts file paths (files: ["/abs/path.png"]) for attachments and an optional parse_mode ("MarkdownV2" or "HTML") for formatting. Use react to add emoji reactions, and edit_message for interim progress updates. Edits don\'t trigger push notifications — when a long task completes, send a new reply so the user\'s device pings.',
       '',
       'send_keyboard sends a message with inline buttons. Each button has label + callback_data. When user taps a button, you receive a channel notification with callback_query=true and the callback_data value as content. Use answer_callback to acknowledge button taps.',
       '',
@@ -622,8 +622,19 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'download_attachment',
+      description: 'Download a file attachment from a Telegram message to the local inbox. Use when the inbound <channel> meta shows attachment_file_id. Returns the local file path ready to Read. Telegram caps bot downloads at 20MB.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          file_id: { type: 'string', description: 'The attachment_file_id from inbound meta' },
+        },
+        required: ['file_id'],
+      },
+    },
+    {
       name: 'edit_message',
-      description: 'Edit a message the bot previously sent. Useful for progress updates (send "working…" then edit to the result).',
+      description: 'Edit a message the bot previously sent. Useful for interim progress updates. Edits don\'t trigger push notifications — send a new reply when a long task completes so the user\'s device pings.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -909,6 +920,22 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         ])
         return { content: [{ type: 'text', text: 'reacted' }] }
       }
+      case 'download_attachment': {
+        const file_id = args.file_id as string
+        const file = await bot.api.getFile(file_id)
+        if (!file.file_path) throw new Error('Telegram returned no file_path — file may have expired')
+        const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`)
+        const buf = Buffer.from(await res.arrayBuffer())
+        const rawExt = file.file_path.includes('.') ? file.file_path.split('.').pop()! : 'bin'
+        const dlExt = rawExt.replace(/[^a-zA-Z0-9]/g, '') || 'bin'
+        const uniqueId = (file.file_unique_id ?? '').replace(/[^a-zA-Z0-9_-]/g, '') || 'dl'
+        const dlPath = join(INBOX_DIR, `${Date.now()}-${uniqueId}.${dlExt}`)
+        mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
+        writeFileSync(dlPath, buf)
+        return { content: [{ type: 'text', text: dlPath }] }
+      }
       case 'edit_message': {
         assertAllowedChat(args.chat_id as string)
         const editParseMode = args.parse_mode as 'MarkdownV2' | 'HTML' | undefined
@@ -1158,50 +1185,30 @@ bot.on('message:photo', async ctx => {
   })
 })
 
-// Handle documents (PDFs, etc.) — download like photos, gate before downloading.
+// Handle documents (PDFs, etc.) — pass file_id for lazy download via download_attachment.
 bot.on('message:document', async ctx => {
   const doc = ctx.message.document
-  const caption = ctx.message.caption ?? `(document: ${doc.file_name ?? 'unknown'})`
-  await handleInbound(ctx, caption, async () => {
-    try {
-      const file = await ctx.api.getFile(doc.file_id)
-      if (!file.file_path) return undefined
-      const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
-      const res = await fetch(url)
-      const buf = Buffer.from(await res.arrayBuffer())
-      const rawName = doc.file_name ?? `${Date.now()}-doc`
-      // Sanitize filename — strip path separators and traversal to prevent path injection
-      const safeName = rawName.replace(/[/\\]/g, '_').replace(/\.\./g, '_')
-      const path = join(INBOX_DIR, `${Date.now()}-${safeName}`)
-      mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
-      writeFileSync(path, buf)
-      return path
-    } catch (err) {
-      process.stderr.write(`telegram channel: document download failed: ${err}\n`)
-      return undefined
-    }
+  const rawName = doc.file_name ?? 'file'
+  const safeName = rawName.replace(/[/\\]/g, '_').replace(/\.\./g, '_')
+  const caption = ctx.message.caption ?? `(document: ${safeName})`
+  await handleInbound(ctx, caption, undefined, {
+    kind: 'document',
+    file_id: doc.file_id,
+    size: doc.file_size,
+    mime: doc.mime_type,
+    name: safeName,
   })
 })
 
-// Handle voice messages — download and save as .ogg.
+// Handle voice messages — pass file_id for lazy download via download_attachment.
 bot.on('message:voice', async ctx => {
   const voice = ctx.message.voice
-  const caption = `(voice message, ${voice.duration}s)`
-  await handleInbound(ctx, caption, async () => {
-    try {
-      const file = await ctx.api.getFile(voice.file_id)
-      if (!file.file_path) return undefined
-      const url = `https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`
-      const res = await fetch(url)
-      const buf = Buffer.from(await res.arrayBuffer())
-      const path = join(INBOX_DIR, `${Date.now()}-voice.ogg`)
-      mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
-      writeFileSync(path, buf)
-      return path
-    } catch (err) {
-      process.stderr.write(`telegram channel: voice download failed: ${err}\n`)
-      return undefined
-    }
+  const caption = ctx.message.caption ?? '(voice message)'
+  await handleInbound(ctx, caption, undefined, {
+    kind: 'voice',
+    file_id: voice.file_id,
+    size: voice.file_size,
+    mime: voice.mime_type,
   })
 })
 
@@ -1235,10 +1242,19 @@ bot.on('callback_query:data', async ctx => {
   })
 })
 
+type AttachmentMeta = {
+  kind: string           // 'document' | 'voice' | 'photo'
+  file_id: string
+  size?: number
+  mime?: string
+  name?: string
+}
+
 async function handleInbound(
   ctx: Context,
   text: string,
   downloadImage: (() => Promise<string | undefined>) | undefined,
+  attachment?: AttachmentMeta,
 ): Promise<void> {
   const result = gate(ctx)
 
@@ -1275,6 +1291,7 @@ async function handleInbound(
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.
+  // attachment_file_id enables lazy download via download_attachment tool.
   void mcp.notification({
     method: 'notifications/claude/channel',
     params: {
@@ -1286,6 +1303,13 @@ async function handleInbound(
         user_id: String(from.id),
         ts: new Date((ctx.message?.date ?? 0) * 1000).toISOString(),
         ...(imagePath ? { image_path: imagePath } : {}),
+        ...(attachment ? {
+          attachment_kind: attachment.kind,
+          attachment_file_id: attachment.file_id,
+          ...(attachment.size != null ? { attachment_size: String(attachment.size) } : {}),
+          ...(attachment.mime ? { attachment_mime: attachment.mime } : {}),
+          ...(attachment.name ? { attachment_name: attachment.name } : {}),
+        } : {}),
       },
     },
   })

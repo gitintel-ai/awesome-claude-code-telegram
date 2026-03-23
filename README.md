@@ -81,7 +81,7 @@ Claude: reads PDF, extracts key metrics, responds with summary
 
 ## What You Get
 
-### 14 Tools (vs 3 in official)
+### 15 Tools (vs 4 in official)
 
 **Messaging**
 
@@ -90,6 +90,7 @@ Claude: reads PDF, extracts key metrics, responds with summary
 | `reply` | Send with **MarkdownV2/HTML** formatting | `reply(chat_id, "<b>Done</b>", parse_mode: "HTML")` |
 | `react` | Emoji reaction | `react(chat_id, msg_id, "🔥")` |
 | `edit_message` | Update sent messages | `edit_message(chat_id, msg_id, "Updated text")` |
+| `download_attachment` | **Lazy file download** from Telegram | `download_attachment(file_id)` → local path |
 | `send_keyboard` | **Inline buttons** | `send_keyboard(chat_id, "Approve?", [[{label: "Yes", callback_data: "yes"}]])` |
 | `answer_callback` | Acknowledge button tap | `answer_callback(query_id, "Approved!")` |
 | `pin_message` | Pin important updates | `pin_message(chat_id, msg_id)` |

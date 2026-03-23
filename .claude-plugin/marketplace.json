@@ -7,7 +7,7 @@
     {
       "name": "telegram",
       "source": "./",
-      "description": "Extended Telegram channel — 14 tools, built-in scheduler, inline keyboards, document/voice handling.",
+      "description": "Extended Telegram channel — 15 tools, built-in scheduler, inline keyboards, document/voice handling.",
       "skills": ["./skills/access", "./skills/configure"]
     }
   ]

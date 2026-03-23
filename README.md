@@ -6,7 +6,7 @@
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
     <img src="https://img.shields.io/badge/runtime-Bun-f472b6" alt="Bun">
-    <img src="https://img.shields.io/badge/tools-14-green" alt="14 Tools">
+    <img src="https://img.shields.io/badge/tools-15-green" alt="14 Tools">
     <img src="https://img.shields.io/badge/scheduler-built--in-orange" alt="Built-in Scheduler">
     <img src="https://img.shields.io/badge/MCP-compatible-purple" alt="MCP Compatible">
   </p>
@@ -16,7 +16,7 @@
 
 The official Claude Code Telegram plugin gives you 3 tools: `reply`, `react`, `edit_message`.
 
-This plugin gives you **14 tools**, a **built-in task scheduler**, and handles **documents, voice, and interactive buttons** — all in a single process with zero polling conflicts.
+This plugin gives you **15 tools**, a **built-in task scheduler**, and handles **documents, voice, and interactive buttons** — all in a single process with zero polling conflicts.
 
 ## Table of Contents
 
